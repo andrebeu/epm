@@ -1,0 +1,1 @@
+rsync -r -vam abeukers@tigergpu.princeton.edu:/tigress/abeukers/wd/epm/models/state* /Users/abeukers/wd/epm/models/
