@@ -22,6 +22,7 @@ class NBackTask():
         `batch,time,step`
     """
     seq = np.random.randint(0,numstim,num_trials)
+    # seq = np.arange(num_trials)
     Xt = seq
     Xroll = np.roll(seq,self.numback)
     Yt = np.array(Xt == Xroll).astype(int)
@@ -217,7 +218,7 @@ class Trainer():
     return eval_step_outs
 
   def eval_loop(self,num_itr):
-    loss_arr = np.empty([num_itr,self.net.depth])
+    loss_arr = np.empty([num_itr,self.net.depth-self.net.preunroll_depth])
     acc_arr = np.empty([num_itr])
     for it in range(num_itr):
       self.net.sess.run(self.net.randomize_emat)

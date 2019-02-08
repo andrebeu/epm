@@ -3,9 +3,10 @@ import sys
 import numpy as np
 from nback import *
 
-numstim = int(sys.argv[1])
-numback = int(sys.argv[2])
 
+numback = int(sys.argv[1])
+
+numstim = 2
 cell_size = 30
 depth = 50
 
