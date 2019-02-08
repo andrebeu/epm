@@ -10,7 +10,3 @@ wd_dir="/tigress/abeukers/wd/epm"
 for NUMBACK in {5..15}; do 
 	sbatch ${wd_dir}/gpu_jobsub.cmd "${NUMBACK}" 
 done
-
-
-
-
