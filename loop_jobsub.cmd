@@ -8,8 +8,10 @@ wd_dir="/tigress/abeukers/wd/epm"
 CELLSIZE=${1}
 
 ## now loop through the above array
-for i in {1..5}; do 
-	sbatch ${wd_dir}/gpu_jobsub.cmd "${CELLSIZE}" 
+for NUMBACK in {2..6}; do 
+	for NUMSTIM in {10..15}; do 
+		sbatch ${wd_dir}/gpu_jobsub.cmd "${NUMBACK}" "${NUMSTIM}" 
+	done
 done
 
 

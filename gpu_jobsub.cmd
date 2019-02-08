@@ -11,7 +11,8 @@
 
 printf "\n\n\n --ntasks-per-node=1 -c=8 ntasks-per-socket=4 \n\n\n"
 
-CELLSIZE=${1}
+NUMBACK=${1}
+NUMSTIM=${2}
 
 module load anaconda3/4.4.0
 module load cudnn/cuda-9.1/7.1.2
@@ -21,7 +22,7 @@ module load openmpi/gcc/2.1.0/64 # srm
 printf "\n\n NBack Task \n\n"
 
 
-srun python -u "/tigress/abeukers/wd/epm/train_and_save.py" ${CELLSIZE} 
+srun python -u "/tigress/abeukers/wd/epm/nback_trainsave.py" ${NUMBACK} ${NUMSTIM} 
 
 
 printf "\n\nGPU profiling \n\n"

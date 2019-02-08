@@ -7,10 +7,10 @@ numstim = int(sys.argv[1])
 numback = int(sys.argv[2])
 
 cell_size = 30
-depth = 40
+depth = 50
 
-NUM_EPOCHS = 2000
-EPOCHS_PER_SESSION = 500
+NUM_EPOCHS = 20000
+EPOCHS_PER_SESSION = 2000
 
 # initialize
 ML = MetaLearner(cell_size,depth=depth,numstim=numstim,preunroll=numback)
