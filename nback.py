@@ -2,9 +2,6 @@ import tensorflow as tf
 from datetime import datetime as dt
 import numpy as np
 
-
-INSTEPS = 1
-OUTSTEPS = 1
 BATCH_SIZE = 1
 
 """ output 0 for trials previous to N
@@ -12,36 +9,37 @@ BATCH_SIZE = 1
 
 class NBackTask():
 
-  def __init__(self,numback):
-    self.numback=numback
+  def __init__(self,nback):
+    self.nback = nback
     return None
 
-  def gen_seq(self,num_trials,numstim):
+  def gen_seq(self,ntrials,nstim):
     """
     returns X=[[x(t),y(t-t)],...] Y=[[[y(t)]]]
         `batch,time,step`
     """
-    seq = np.random.randint(0,numstim,num_trials)
-    # seq = np.arange(num_trials)
+    # ntrials += self.nback
+    seq = np.random.randint(0,nstim,ntrials+self.nback)
+    # seq = np.arange(ntrials)
     Xt = seq
-    Xroll = np.roll(seq,self.numback)
+    Xroll = np.roll(seq,self.nback)
     Yt = np.array(Xt == Xroll).astype(int)
-    X = np.expand_dims(np.stack([Xt],1),0) 
+    X = np.expand_dims(Xt,0) 
     Y = np.expand_dims(Yt,0)
     return X,Y
 
 
 class MetaLearner():
 
-  def __init__(self,cell_size,depth,numstim,preunroll):
+  def __init__(self,stsize,depth,nback,nstim=2):
     """
     """
     self.graph = tf.Graph()
     self.sess = tf.Session(graph=self.graph)
-    self.preunroll_depth = preunroll
-    self.depth = depth
-    self.cell_size = cell_size
-    self.numstim = numstim
+    self.stsize = stsize
+    self.depth = depth 
+    self.nback = nback
+    self.nstim = nstim
     self.embed_size = 2
     self.num_actions = 2
     self.build()
@@ -49,27 +47,28 @@ class MetaLearner():
 
   def build(self):
     with self.graph.as_default():
-
       ## data feeding
       self.setup_placeholders()
-      self.xbatch_id,self.ybatch_id,self.itr_initop = self.data_pipeline() # x(batches,depth,inlen), y(batch,depth,1)
-      self.ybatch_id = self.ybatch_id[:,self.preunroll_depth:]
-      # embedding
-      self.emat = tf.get_variable('embedding_matrix',[self.numstim,self.embed_size],trainable=False,initializer=tf.initializers.random_normal(0,1)) 
+      self.xbatch_id,self.ybatch_id,self.itr_initop = self.data_pipeline() # x(batch,depth+nback), y(batch,depth+nback)
+      # embedding matrix and randomization op
+      self.emat = tf.get_variable('embedding_matrix',[self.nstim,self.embed_size],
+                    trainable=False,initializer=tf.initializers.random_normal(0,1)) 
       self.randomize_emat = self.emat.initializer
       ## inference
-      self.xbatch = tf.nn.embedding_lookup(self.emat,self.xbatch_id,name='xembed') # batch,bptt,instep,numstim
-      self.yhat_unscaled,self.finalstate = self.RNNinference(self.xbatch) # batch,bptt,num_actions
-      ## loss
-      self.ybatch_onehot = tf.one_hot(self.ybatch_id,self.num_actions) # batch,bptt,num_actions
+      self.xbatch = tf.nn.embedding_lookup(self.emat,self.xbatch_id,name='xembed') # batch,depth+nabck,embsize
+      self.yhat_unscaled_full,self.finalstate = self.RNNinference(self.xbatch) # batch,depth+nback,num_actions
+      self.yhat_unscaled_bptt = self.yhat_unscaled_full[:,self.nback:,:] # batch,depth,num_actions
+      ## train
+      self.ybatch_onehot_full = tf.one_hot(self.ybatch_id,self.num_actions) # batch,depth+nback,num_actions
+      self.ybatch_onehot_bptt = self.ybatch_onehot_full[:,self.nback:,:] # batch,depth,num_actions
       self.loss = tf.nn.softmax_cross_entropy_with_logits_v2(
-                          labels=self.ybatch_onehot,logits=self.yhat_unscaled)
-      ## eval
-      self.yhat_sm = tf.nn.softmax(self.yhat_unscaled)
-      self.eval_loss = self.loss
-      ##
+                          labels=self.ybatch_onehot_bptt,logits=self.yhat_unscaled_bptt)
       print('ADAM005')
       self.minimizer = tf.train.AdamOptimizer(0.005).minimize(self.loss)
+      ## eval
+      self.yhat_sm = tf.nn.softmax(self.yhat_unscaled_full) # batch,depth+nback,num_actions
+      self.eval_loss = tf.nn.softmax_cross_entropy_with_logits_v2(
+                          labels=self.ybatch_onehot_full,logits=self.yhat_unscaled_full)
       # other
       self.sess.run(tf.global_variables_initializer())
       self.saver_op = tf.train.Saver(max_to_keep=None)
@@ -102,16 +101,16 @@ class MetaLearner():
     setsup placeholders as instance variables
     """
     self.xph = tf.placeholder(tf.int32,
-              shape=[None,self.depth,INSTEPS],
+              shape=[None,self.depth+self.nback],
               name="xdata_placeholder")
     self.yph = tf.placeholder(tf.int32,
-                  shape=[None,self.depth],
+                  shape=[None,self.depth+self.nback],
                   name="ydata_placeholder")
     self.dropout_keep_pr = tf.placeholder(tf.float32,
                   shape=[],
                   name="dropout_ph")
     self.cellstate_ph = tf.placeholder(tf.float32,
-                  shape=[None,self.cell_size],
+                  shape=[None,self.stsize],
                   name = "initialstate_ph")
     return None
 
@@ -119,33 +118,27 @@ class MetaLearner():
 
   def RNNinference(self,xbatch):
     """ 
-    processes a batch of input sequences
-    each sequence is of dim [DEPTH]
-    returns ops: output sequence and final state
-    output sequence is of length DEPTH
     """
     with tf.variable_scope('CELL_SCOPE') as cellscope:
       # setup RNN cell      
       cell = tf.contrib.rnn.LayerNormBasicLSTMCell(
-            self.cell_size,dropout_keep_prob=self.dropout_keep_pr)
+            self.stsize,dropout_keep_prob=self.dropout_keep_pr)
       ## input projection
       # [batch,depth,insteps,embed_size]
-      xbatch = tf.layers.dense(xbatch,self.cell_size,
+      xbatch = tf.layers.dense(xbatch,self.stsize,
                   activation=tf.nn.relu,name='inproj')
-      # [batch,depth,insteps,cell_size]
+      # [batch,depth,insteps,stsize]
       initstate = state = tf.nn.rnn_cell.LSTMStateTuple(self.cellstate_ph,self.cellstate_ph)
       ## unroll 
       outputL = []
-      for tstep in range(self.depth):
-        for instep in range(INSTEPS):
-          if instep > 0: cellscope.reuse_variables()
-          output,state = cell(xbatch[:,tstep,instep,:], state)
-        if tstep >= self.preunroll_depth:
-	        outputL.append(output)
+      for tstep in range(self.depth+self.nback):
+        if tstep > 0: cellscope.reuse_variables()
+        output,state = cell(xbatch[:,tstep,:], state)
+        outputL.append(output)
     # output projection
     outputs = tf.convert_to_tensor(outputL) # depth,batch,cellsize
     outputs = tf.transpose(outputs,(1,0,2)) # batch,depth,cellsize
-    outputs = tf.layers.dense(outputs,self.cell_size,
+    outputs = tf.layers.dense(outputs,self.stsize,
                   activation=tf.nn.relu,name='hidoutlayer')
     outputs = tf.layers.dense(outputs,self.num_actions,
                   activation=None,name='outproj')
@@ -155,8 +148,8 @@ class MetaLearner():
 
 class Trainer():
 
-  def __init__(self,net,numback):
-    self.task = NBackTask(numback)
+  def __init__(self,net,nback):
+    self.task = NBackTask(nback)
     self.net = net
     return None
 
@@ -186,26 +179,25 @@ class Trainer():
         # randomize embeddings
         self.net.sess.run(self.net.randomize_emat)
         # flush cell state
-        rand_cell_state = cell_state = np.random.randn(BATCH_SIZE,self.net.cell_size)
+        rand_cell_state = cell_state = np.random.randn(BATCH_SIZE,self.net.stsize)
       # # generate data
       # emat = self.net.sess.run(self.net.emat)
-      Xdata,Ydata = self.task.gen_seq(self.net.depth,self.net.numstim)
+      Xdata,Ydata = self.task.gen_seq(self.net.depth,self.net.nstim)
       # train step
       cell_state = self.train_step(Xdata,Ydata,cell_state)
       # printing
       if ep_num%(num_epochs/num_evals) == 0:
         eval_idx += 1
-        step_loss,step_yhat,step_ybatch = self.eval_step(Xdata,Ydata,cell_state)
-        step_acc = np.mean(step_ybatch.argmax(2) == step_yhat.argmax(2))
-        loss_arr[eval_idx] = np.mean(step_loss)
-        acc_arr[eval_idx] = step_acc
+        evalstep_loss,evalstep_acc = self.eval_step(Xdata,Ydata,cell_state)
+        loss_arr[eval_idx] = np.mean(evalstep_loss)
+        acc_arr[eval_idx] = np.mean(evalstep_acc)
         if ep_num%(num_epochs/20) == 0:
-          print(ep_num/num_epochs,np.mean(step_loss)) 
+          print(ep_num/num_epochs,np.mean(evalstep_loss)) 
     return loss_arr,acc_arr
 
   def eval_step(self,Xdata,Ydata,cell_state=None):
     if type(cell_state) == type(None):
-      cell_state = np.random.randn(BATCH_SIZE,self.net.cell_size)
+      cell_state = np.random.randn(BATCH_SIZE,self.net.stsize)
     ## setup
     feed_dict = { self.net.xph:Xdata,
                   self.net.yph:Ydata,
@@ -214,18 +206,22 @@ class Trainer():
                   }
     self.net.sess.run([self.net.itr_initop],feed_dict)
     ## eval
-    eval_step_outs = self.net.sess.run([self.net.eval_loss,self.net.yhat_sm,self.net.ybatch_onehot],feed_dict)
-    return eval_step_outs
+    step_loss,step_yhat_sm,step_ybatch = self.net.sess.run(
+                                        [self.net.eval_loss,
+                                        self.net.yhat_sm,
+                                        self.net.ybatch_onehot_full
+                                        ],feed_dict)
+    step_acc = step_yhat_sm.argmax(2) == step_ybatch.argmax(2)
+    return step_loss,step_acc
 
   def eval_loop(self,num_itr):
-    loss_arr = np.empty([num_itr,self.net.depth-self.net.preunroll_depth])
-    acc_arr = np.empty([num_itr])
+    loss_arr = np.empty([num_itr,self.net.depth+self.net.nback])
+    acc_arr = np.empty([num_itr,self.net.depth+self.net.nback])
     for it in range(num_itr):
       self.net.sess.run(self.net.randomize_emat)
-      rand_cell_state = cell_state = np.random.randn(BATCH_SIZE,self.net.cell_size)
-      Xdata,Ydata = self.task.gen_seq(self.net.depth,self.net.numstim)
-      step_loss,step_yhat,step_ybatch = self.eval_step(Xdata,Ydata,rand_cell_state)
-      step_acc = np.sum(step_ybatch.argmax(2) == step_yhat.argmax(2))
+      rand_cell_state = cell_state = np.random.randn(BATCH_SIZE,self.net.stsize)
+      Xdata,Ydata = self.task.gen_seq(self.net.depth,self.net.nstim)
+      step_loss,step_acc = self.eval_step(Xdata,Ydata,rand_cell_state)
       loss_arr[it] = step_loss
       acc_arr[it] = step_acc
     return loss_arr,acc_arr
