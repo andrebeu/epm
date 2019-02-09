@@ -7,6 +7,8 @@ wd_dir="/tigress/abeukers/wd/epm"
 
 
 ## now loop through the above array
-for NUMBACK in {1..10}; do 
-	sbatch ${wd_dir}/gpu_jobsub.cmd "${NUMBACK}" 
+for i in {1..25}; do 
+	for NUMBACK in {1..10}; do 
+		sbatch ${wd_dir}/gpu_jobsub.cmd "${NUMBACK}" 
+	done
 done

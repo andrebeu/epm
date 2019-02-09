@@ -148,8 +148,8 @@ class MetaLearner():
 
 class Trainer():
 
-  def __init__(self,net,nback):
-    self.task = NBackTask(nback)
+  def __init__(self,net):
+    self.task = NBackTask(net.nback)
     self.net = net
     return None
 
