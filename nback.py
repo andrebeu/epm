@@ -31,7 +31,7 @@ class NBackTask():
 
 class MetaLearner():
 
-  def __init__(self,stsize,depth,nback,nstim=2):
+  def __init__(self,stsize,depth,nback,nstim=2,embed_size=2):
     """
     """
     self.graph = tf.Graph()
@@ -40,7 +40,7 @@ class MetaLearner():
     self.depth = depth 
     self.nback = nback
     self.nstim = nstim
-    self.embed_size = 2
+    self.embed_size = embed_size
     self.num_actions = 2
     self.build()
     return None

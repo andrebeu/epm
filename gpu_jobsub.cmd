@@ -11,7 +11,7 @@
 
 printf "\n\n\n --ntasks-per-node=1 -c=8 ntasks-per-socket=4 \n\n\n"
 
-NUMBACK=${1}
+EDIM=${1}
 
 module load anaconda3/4.4.0
 module load cudnn/cuda-9.1/7.1.2
@@ -21,7 +21,7 @@ module load openmpi/gcc/2.1.0/64 # srm
 printf "\n\n NBack Task \n\n"
 
 
-srun python -u "/tigress/abeukers/wd/epm/nback_trainsave.py" ${NUMBACK} 
+srun python -u "/tigress/abeukers/wd/epm/nback_trainsave.py" ${EDIM} 
 
 
 printf "\n\nGPU profiling \n\n"
