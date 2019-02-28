@@ -4,7 +4,8 @@ import numpy as np
 
 BATCH_SIZE = 1
 
-""" output 0 for trials previous to N
+""" 
+output 0 for trials previous to N
 """
 
 class NBackTask():
@@ -19,7 +20,7 @@ class NBackTask():
         `batch,time,step`
     """
     # ntrials += self.nback
-    seq = np.random.randint(0,nstim,ntrials+self.nback)
+    seq = np.random.randint(0,nstim,ntrials)
     # seq = np.arange(ntrials)
     Xt = seq
     Xroll = np.roll(seq,self.nback)
@@ -31,7 +32,7 @@ class NBackTask():
 
 class MetaLearner():
 
-  def __init__(self,stsize,depth,nback,nstim=2,embed_size=2):
+  def __init__(self,stsize,depth,nback,nstim=3,embed_size=8):
     """
     """
     self.graph = tf.Graph()
@@ -49,24 +50,27 @@ class MetaLearner():
     with self.graph.as_default():
       ## data feeding
       self.setup_placeholders()
-      self.xbatch_id,self.ybatch_id,self.itr_initop = self.data_pipeline() # x(batch,depth+nback), y(batch,depth+nback)
+      self.xbatch_id,self.ybatch_id,self.itr_initop = self.data_pipeline() # x(batch,depth), y(batch,depth)
       # embedding matrix and randomization op
       self.emat = tf.get_variable('embedding_matrix',[self.nstim,self.embed_size],
                     trainable=False,initializer=tf.initializers.random_normal(0,1)) 
       self.randomize_emat = self.emat.initializer
       ## inference
-      self.xbatch = tf.nn.embedding_lookup(self.emat,self.xbatch_id,name='xembed') # batch,depth+nabck,embsize
-      self.yhat_unscaled_full,self.finalstate = self.RNNinference(self.xbatch) # batch,depth+nback,num_actions
-      self.yhat_unscaled_bptt = self.yhat_unscaled_full[:,self.nback:,:] # batch,depth,num_actions
+      self.xbatch = tf.nn.embedding_lookup(self.emat,self.xbatch_id,name='xembed') # batch,depth,embsize
+      ##
+      self.yhat_unscaled_full,self.finalstate = self.RNNinference_keras(self.xbatch) # batch,depth,num_actions
+      # print('explicit unroll')
+      # self.yhat_unscaled_full,self.finalstate = self.RNNinference(self.xbatch) # batch,depth,num_actions
+      ## 
+      self.yhat_unscaled_bptt = self.yhat_unscaled_full[:,int(self.depth/2):,:] # batch,depth,num_actions
       ## train
-      self.ybatch_onehot_full = tf.one_hot(self.ybatch_id,self.num_actions) # batch,depth+nback,num_actions
-      self.ybatch_onehot_bptt = self.ybatch_onehot_full[:,self.nback:,:] # batch,depth,num_actions
-      self.loss = tf.nn.softmax_cross_entropy_with_logits_v2(
+      self.ybatch_onehot_full = tf.one_hot(self.ybatch_id,self.num_actions) # batch,depth,num_actions
+      self.ybatch_onehot_bptt = self.ybatch_onehot_full[:,int(self.depth/2):,:] # batch,depth,num_actions
+      self.train_loss = tf.nn.softmax_cross_entropy_with_logits_v2(
                           labels=self.ybatch_onehot_bptt,logits=self.yhat_unscaled_bptt)
-      print('ADAM005')
-      self.minimizer = tf.train.AdamOptimizer(0.005).minimize(self.loss)
+      self.minimizer = tf.train.AdamOptimizer(0.005).minimize(self.train_loss)
       ## eval
-      self.yhat_sm = tf.nn.softmax(self.yhat_unscaled_full) # batch,depth+nback,num_actions
+      self.yhat_sm = tf.nn.softmax(self.yhat_unscaled_full) # batch,depth,num_actions
       self.eval_loss = tf.nn.softmax_cross_entropy_with_logits_v2(
                           labels=self.ybatch_onehot_full,logits=self.yhat_unscaled_full)
       # other
@@ -101,10 +105,10 @@ class MetaLearner():
     setsup placeholders as instance variables
     """
     self.xph = tf.placeholder(tf.int32,
-              shape=[None,self.depth+self.nback],
+              shape=[None,self.depth],
               name="xdata_placeholder")
     self.yph = tf.placeholder(tf.int32,
-                  shape=[None,self.depth+self.nback],
+                  shape=[None,self.depth],
                   name="ydata_placeholder")
     self.dropout_keep_pr = tf.placeholder(tf.float32,
                   shape=[],
@@ -118,11 +122,15 @@ class MetaLearner():
 
   def RNNinference(self,xbatch):
     """ 
+    This explicitly unrolls the rnn on the input dimension
+    this is slower than using the _keras version of this method
+    but I am keeping it because the current implementation of 
+    the _keras version does not allow me to return the state trajectory
     """
     with tf.variable_scope('CELL_SCOPE') as cellscope:
       # setup RNN cell      
       cell = tf.contrib.rnn.LayerNormBasicLSTMCell(
-            self.stsize,dropout_keep_prob=self.dropout_keep_pr)
+                self.stsize,dropout_keep_prob=self.dropout_keep_pr)
       ## input projection
       # [batch,depth,insteps,embed_size]
       xbatch = tf.layers.dense(xbatch,self.stsize,
@@ -131,7 +139,7 @@ class MetaLearner():
       initstate = state = tf.nn.rnn_cell.LSTMStateTuple(self.cellstate_ph,self.cellstate_ph)
       ## unroll 
       outputL = []
-      for tstep in range(self.depth+self.nback):
+      for tstep in range(self.depth):
         if tstep > 0: cellscope.reuse_variables()
         output,state = cell(xbatch[:,tstep,:], state)
         outputL.append(output)
@@ -144,6 +152,21 @@ class MetaLearner():
                   activation=None,name='outproj')
     return outputs,state
 
+  def RNNinference_keras(self,xbatch):
+    with tf.variable_scope('CELL_SCOPE') as cellscope:
+      lstm_cell = tf.keras.layers.LSTMCell(self.stsize)
+      init_state = lstm_cell.get_initial_state(self.cellstate_ph)
+      lstm_layer = tf.keras.layers.RNN(
+        lstm_cell,return_sequences=True,return_state=True)
+      dropout_inlayer = tf.keras.layers.Dropout((1-self.dropout_keep_pr))
+      dense_inlayer = tf.keras.layers.Dense(self.stsize)
+      dense_outlayer1 = tf.keras.layers.Dense(self.stsize,activation='relu')
+      dense_outlayer2 = tf.keras.layers.Dense(self.num_actions,activation=None)
+      # forward prop
+      xbatch = dropout_inlayer(dense_inlayer(xbatch))
+      lstm_outputs,final_output,final_state = lstm_layer(xbatch,initial_state=init_state)
+      outputs = dense_outlayer2(dense_outlayer1(lstm_outputs))
+    return outputs,final_state
 
 
 class Trainer():
@@ -165,7 +188,8 @@ class Trainer():
     cell_st,_ = self.net.sess.run(
       [self.net.finalstate,self.net.minimizer],feed_dict)
     cell_st = cell_st[0] # only return c-state
-    return cell_st
+    return np.expand_dims(cell_st,0)
+    # return cell_st
 
   def train_loop(self,num_epochs,epochs_per_session):
     """
@@ -215,8 +239,8 @@ class Trainer():
     return step_loss,step_acc
 
   def eval_loop(self,num_itr):
-    loss_arr = np.empty([num_itr,self.net.depth+self.net.nback])
-    acc_arr = np.empty([num_itr,self.net.depth+self.net.nback])
+    loss_arr = np.empty([num_itr,self.net.depth])
+    acc_arr = np.empty([num_itr,self.net.depth])
     for it in range(num_itr):
       self.net.sess.run(self.net.randomize_emat)
       rand_cell_state = cell_state = np.random.randn(BATCH_SIZE,self.net.stsize)
