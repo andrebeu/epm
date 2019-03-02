@@ -158,14 +158,16 @@ class MetaLearner():
       init_state = lstm_cell.get_initial_state(self.cellstate_ph)
       lstm_layer = tf.keras.layers.RNN(
         lstm_cell,return_sequences=True,return_state=True)
-      dropout_inlayer = tf.keras.layers.Dropout((1-self.dropout_keep_pr))
+      dropout_inlayer = tf.keras.layers.Dropout(rate=(1-self.dropout_keep_pr))
       dense_inlayer = tf.keras.layers.Dense(self.stsize)
       dense_outlayer1 = tf.keras.layers.Dense(self.stsize,activation='relu')
       dense_outlayer2 = tf.keras.layers.Dense(self.num_actions,activation=None)
       # forward prop
-      xbatch = dropout_inlayer(dense_inlayer(xbatch))
+      # xbatch = dropout_inlayer(dense_inlayer(xbatch))
+      xbatch = dropout_inlayer(xbatch)
       lstm_outputs,final_output,final_state = lstm_layer(xbatch,initial_state=init_state)
-      outputs = dense_outlayer2(dense_outlayer1(lstm_outputs))
+      outputs = dense_outlayer2(lstm_outputs)
+      # outputs = dense_outlayer2(dense_outlayer1(lstm_outputs))
     return outputs,final_state
 
 
