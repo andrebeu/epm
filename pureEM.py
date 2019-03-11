@@ -1,7 +1,65 @@
 import tensorflow as tf
-
+import numpy as np
 
 BATCH_SIZE = 1
+
+
+class NMBackTask():
+
+  def __init__(self,nback,mback,nstim):
+    """ assume m>n
+    """
+    self.nmbackL = [nback,mback]
+    self.nstim = nstim
+    return None
+
+  def gen_seq(self,ntrials,task_flag):
+    """
+    task_flag can be 0 or 1 to indicate whether
+      to perform nback or mback.
+    returns X=[[x(t),y(t-t)],...] Y=[[[y(t)]]]
+        `batch,time,step`
+    """
+    # sample either n or mback task
+    nmback = self.nmbackL[task_flag]
+    # compose sequnece
+    seq = np.random.randint(2,self.nstim+2,ntrials)
+    seq_roll = np.roll(seq,nmback)
+    Xt = seq
+    Yt = (seq==seq_roll).astype(int)
+    Xt = np.append(task_flag,Xt)
+    Yt = np.append(task_flag,Yt)
+    X = np.expand_dims(Xt[:-1],0) 
+    Y = np.expand_dims(Yt[:-1],0)
+    return X,Y
+
+class NBackPMTask():
+
+  def __init__(self,nback,nstim):
+    """ assume m>n
+    """
+    self.nback = nback
+    self.nstim = nstim
+    return None
+
+  def gen_seq(self,ntrials):
+    """
+    task_flag can be 0 or 1 to indicate whether
+      to perform nback or mback.
+    returns X=[[x(t),y(t-t)],...] Y=[[[y(t)]]]
+        `batch,time,step`
+    """
+    # compose sequnece
+    seq = np.random.randint(1,self.nstim+1,ntrials)
+    seq_roll = np.roll(seq,self.nback)
+    Xt = seq
+    Yt = (seq==seq_roll).astype(int)
+    # Xt = np.append(task_flag,Xt)
+    # Yt = np.append(task_flag,Yt)
+    X = np.expand_dims(Xt[:-1],0) 
+    Y = np.expand_dims(Yt[:-1],0)
+    return X,Y
+
 
 class PureEM():
 
