@@ -3,6 +3,10 @@ import numpy as np
 
 BATCH_SIZE = 1
 
+""" 
+NB current code does NBack. I now started a new repo for nback task modelling
+this one will be exclusively for PM task. 
+"""
 
 class NMBackTask():
 
@@ -32,6 +36,7 @@ class NMBackTask():
     X = np.expand_dims(Xt[:-1],0) 
     Y = np.expand_dims(Yt[:-1],0)
     return X,Y
+
 
 class NBackPMTask():
 
