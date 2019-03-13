@@ -1,165 +1,219 @@
 import tensorflow as tf
 import numpy as np
 
-BATCH_SIZE = 1
 
-""" 
-NB current code does NBack. I now started a new repo for nback task modelling
-this one will be exclusively for PM task. 
-"""
+TRIALS_TOTAL = 40
 
-class NMBackTask():
-
-  def __init__(self,nback,mback,nstim):
-    """ assume m>n
-    """
-    self.nmbackL = [nback,mback]
-    self.nstim = nstim
-    return None
-
-  def gen_seq(self,ntrials,task_flag):
-    """
-    task_flag can be 0 or 1 to indicate whether
-      to perform nback or mback.
-    returns X=[[x(t),y(t-t)],...] Y=[[[y(t)]]]
-        `batch,time,step`
-    """
-    # sample either n or mback task
-    nmback = self.nmbackL[task_flag]
-    # compose sequnece
-    seq = np.random.randint(2,self.nstim+2,ntrials)
-    seq_roll = np.roll(seq,nmback)
-    Xt = seq
-    Yt = (seq==seq_roll).astype(int)
-    Xt = np.append(task_flag,Xt)
-    Yt = np.append(task_flag,Yt)
-    X = np.expand_dims(Xt[:-1],0) 
-    Y = np.expand_dims(Yt[:-1],0)
-    return X,Y
+# TRIALS_PM = 5
+# NUM_OG_TOKENS = 2
+# NBACK = 2
 
 
 class NBackPMTask():
 
-  def __init__(self,nback,nstim):
+  def __init__(self,nback,num_og_tokens,num_pm_trials,seed=0):
     """ assume m>n
     """
+    np.random.seed(seed)
     self.nback = nback
-    self.nstim = nstim
+    self.num_og_tokens = num_og_tokens
+    self.pm_token = num_og_tokens
+    self.min_start_trials = 5
+    self.num_pm_trials = num_pm_trials
     return None
 
-  def gen_seq(self,ntrials):
+  def gen_seq(self,ntrials=TRIALS_TOTAL,pm_trial_position=None):
     """
-    task_flag can be 0 or 1 to indicate whether
-      to perform nback or mback.
-    returns X=[[x(t),y(t-t)],...] Y=[[[y(t)]]]
-        `batch,time,step`
+    if pm_trial_position is not specified, they are randomly sampled
+      rand pm_trial_position for training, fixed for eval
     """
-    # compose sequnece
-    seq = np.random.randint(1,self.nstim+1,ntrials)
-    seq_roll = np.roll(seq,self.nback)
-    Xt = seq
-    Yt = (seq==seq_roll).astype(int)
-    # Xt = np.append(task_flag,Xt)
-    # Yt = np.append(task_flag,Yt)
-    X = np.expand_dims(Xt[:-1],0) 
-    Y = np.expand_dims(Yt[:-1],0)
+    # insert ranomly positioned pm trials
+    if type(pm_trial_position)==type(None):
+      ntrials -= 1+self.num_pm_trials
+      pm_trial_position = np.random.randint(self.min_start_trials,ntrials,self.num_pm_trials) 
+    else:
+      ntrials -= 1+len(pm_trial_position)
+      pm_trial_position = pm_trial_position
+    # generate og stim
+    seq = np.random.randint(0,self.num_og_tokens,ntrials)
+    X = np.insert(seq,[0,*pm_trial_position],self.pm_token)
+    # form Y 
+    Xroll = np.roll(X,self.nback)
+    Y = (X == Xroll).astype(int) # nback trials
+    Y[X==2]=2 # pm trials
+    # include batch dim
+    X = np.expand_dims(X,0)
+    Y = np.expand_dims(Y,0)
     return X,Y
 
 
-class PureEM():
+class PMNet():
 
-  def __init__(self,ntrials,nstim,dim):
-    self.ntrials = ntrials
-    self.nstim = nstim
-    self.dim = dim
+  def __init__(self,stsize,num_og_tokens,seed=0):
+    """
+    """
     self.graph = tf.Graph()
     self.sess = tf.Session(graph=self.graph)
+    self.seed = seed
+    # net params
+    self.stsize = stsize
+    self.edim = 8
+    self.nstim = num_og_tokens+1 
     self.build()
     return None
 
   def build(self):
     with self.graph.as_default():
-      ## model inputs
-      self.trial_ph,self.stim_ph,self.y_ph = self.setup_placeholders()
-      self.trial_embed,self.stim_embed = self.get_input_embeds()
-      ## compute internal state
-      internal_state = tf.keras.layers.Dense(self.dim,activation='sigmoid')(self.stim_embed)
-      ## Episodic memory [internal_state,trial_embed]
-      self.M_keys,self.M_values = self.get_memory_mats()
-      # retrieve
-      self.retrieved_memory = retrieved_memory = self.retrieve_memory(internal_state)
-      # write {internal_state:trial_embed}
-      write_to_memory_value = tf.assign(
-                                self.M_values[tf.squeeze(self.trial_ph),:],
-                                tf.squeeze(internal_state))
-      write_to_memory_keys = tf.assign(
-                                self.M_keys[tf.squeeze(self.trial_ph),:],
-                                tf.squeeze(self.trial_embed))
-      self.write_to_memory = tf.group([write_to_memory_value,write_to_memory_keys])
-      # empty memory
-      zero_K = self.M_keys.initializer
-      zero_V = self.M_values.initializer
-      self.empty_memory = tf.group([zero_K,zero_V])
-      ## compute response
-      response_in = tf.concat([internal_state,retrieved_memory],axis=-1)
-      response_in = tf.keras.layers.Dense(self.dim,activation='sigmoid')(response_in)
-      response_logits = tf.keras.layers.Dense(2,activation=None)(response_in)
-      ## loss and optimization
+      tf.set_random_seed(self.seed)
+      ## data feeding
+      self.setup_placeholders()
+      self.xbatch_id,self.ybatch_id,self.itr_initop = self.data_pipeline() 
+      # embedding matrix and randomization op
+      self.emat = tf.get_variable(name='emat',shape=[self.nstim,self.edim],
+                    trainable=False,initializer=tf.initializers.random_normal(0,1)) 
+      self.randomize_emat = self.emat.initializer
+      ## inference
+      self.xbatch = tf.nn.embedding_lookup(self.emat,self.xbatch_id,name='xembed') 
+      self.y_logits = self.RNN_keras(self.xbatch) 
+      self.ybatch_onehot = tf.one_hot(self.ybatch_id,self.nstim) 
+      ## train
       self.train_loss = tf.nn.softmax_cross_entropy_with_logits_v2(
-                          labels=tf.one_hot(self.y_ph,2),
-                          logits=response_logits)
-      self.minimizer = tf.train.AdamOptimizer(0.05).minimize(self.train_loss)
+                          labels=self.ybatch_onehot,
+                          logits=self.y_logits)
+      self.minimizer = tf.train.AdamOptimizer(0.005).minimize(self.train_loss)
       ## eval
-      self.response_sm = tf.nn.softmax(response_logits)
-      self.response = tf.argmax(self.response_sm,axis=1)
-      ## extra
+      self.yhat_sm = tf.nn.softmax(self.y_logits)       
+      # other
       self.sess.run(tf.global_variables_initializer())
+      self.saver_op = tf.train.Saver(max_to_keep=None)
     return None
 
   def reinitialize(self):
     """ reinitializes variables to reset weights"""
     with self.graph.as_default():
+      print('randomizing params')
       self.sess.run(tf.global_variables_initializer())
     return None
+  
+  # setup 
 
-  def retrieve_memory(self,query_key):
-    ## use internal state to retrieve memory
-    # compare internal state to stored internal states (keys)
-    state_Mkeys_sim = tf.keras.metrics.cosine(query_key,self.M_keys)
-    state_Mkeys_sim = tf.expand_dims(state_Mkeys_sim,axis=0)
-    state_Mkeys_sim = tf.nn.softmax(state_Mkeys_sim)
-    self.state_Mkeys_sim = state_Mkeys_sim
-    # use similarity to form memory retrieval
-    retrieved_memory = tf.transpose(
-                        tf.matmul(
-                          self.M_values,state_Mkeys_sim,
-                          transpose_a=True,transpose_b=True
-                        ))
-    return retrieved_memory
+  def data_pipeline(self):
+    """data pipeline
+    returns x,y = get_next
+    also creates self.itr_initop
+    """
+    dataset = tf.data.Dataset.from_tensor_slices((self.xph,self.yph))
+    dataset = dataset.batch(1)
+    iterator = tf.data.Iterator.from_structure(
+                dataset.output_types, dataset.output_shapes)
+    itr_initop = iterator.make_initializer(dataset)
+    xbatch,ybatch = iterator.get_next() 
+    return xbatch,ybatch,itr_initop
 
   def setup_placeholders(self):
-    trial_ph = tf.placeholder(name='trial_ph',shape=[1],dtype=tf.int32)
-    stim_ph = tf.placeholder(name='stim_ph',shape=[1],dtype=tf.int32)
-    y_ph = tf.placeholder(name='true_y_ph',shape=[1],dtype=tf.int32)
-    return trial_ph,stim_ph,y_ph
-
-  def get_input_embeds(self):
-    # setupmat
-    self.trial_emat = trial_emat = tf.get_variable('trial_emat',[self.ntrials,self.dim],
-                    trainable=True,initializer=tf.initializers.identity()) 
-    stim_emat = tf.get_variable('stimulus_emat',[self.nstim,self.dim],
-                    trainable=True,initializer=tf.initializers.identity())
-    # lookup
-    trial_embed = tf.nn.embedding_lookup(trial_emat,self.trial_ph,name='trial_embed')
-    stim_embed = tf.nn.embedding_lookup(stim_emat,self.stim_ph,name='stim_embed')
-    return trial_embed,stim_embed
-
-
-  def get_memory_mats(self):
-    """ {internal_state: trial_embed}
     """
-    M_keys = tf.get_variable('memory_matrix_keys',[self.ntrials,self.dim],
-                trainable=False,initializer=tf.initializers.zeros())
-    M_values = tf.get_variable('memory_matrix_values',[self.ntrials,self.dim],
-                trainable=False,initializer=tf.initializers.zeros())
-    return M_keys,M_values
+    setup placeholders as instance variables
+    """
+    self.xph = tf.placeholder(tf.int32,
+              shape=[1,None],
+              name="xdata_placeholder")
+    self.yph = tf.placeholder(tf.int32,
+                  shape=[1,None],
+                  name="ydata_placeholder")
+    self.dropout_rate = tf.placeholder(tf.float32,
+                  shape=[],
+                  name="dropout_rate")
+    return None
+
+  # inference
+
+  def RNN_keras(self,xbatch):
+    """
+    NB unlike before no input projection
+    """
+    # input projection with dropout
+    xbatch = tf.keras.layers.Dense(self.stsize,activation='relu')(xbatch)
+    xbatch = tf.layers.dropout(xbatch,rate=self.dropout_rate)
+    # trinable initial states
+    init_cstate = tf.get_variable(name='init_cstate',
+                  shape=[1,self.stsize],trainable=True)
+    init_hstate = tf.get_variable(name='init_hstate',
+                  shape=[1,self.stsize],trainable=True)
+    # lstm cell
+    lstm_layer = tf.keras.layers.LSTM(self.stsize,return_sequences=True)
+    lstm_outputs = lstm_layer(xbatch,initial_state=[init_cstate,init_hstate])
+    ## readout layers
+    y_logits = tf.keras.layers.Dense(
+                      self.nstim,                      
+                      activation=None
+                      )(lstm_outputs)
+    # readout dropout
+    y_logits = tf.layers.dropout(y_logits,
+                    rate=self.dropout_rate,
+                    name='readout')
+    return y_logits
+
+
+class Trainer():
+
+  def __init__(self,net,task):
+    self.net = net
+    self.task = task
+    return None
+
+  def train_step(self,Xdata,Ydata,cell_state=None):
+    feed_dict = { self.net.xph:Xdata,
+                  self.net.yph:Ydata,
+                  self.net.dropout_rate:0.9,
+                  }
+    # initialize iterator
+    self.net.sess.run([self.net.itr_initop],feed_dict)
+    # update weights and compute final loss
+    self.net.sess.run(self.net.minimizer,feed_dict)
+    return None
+
+  def train_loop(self,nepochs,eps):
+    """
+    """
+    train_acc = np.empty([nepochs])
+    for ep_num in range(nepochs):
+      if ep_num%eps == 0:
+        self.net.sess.run(self.net.randomize_emat)
+      # train step
+      Xdata,Ydata = self.task.gen_seq()
+      self.train_step(Xdata,Ydata)
+      step_acc = self.eval_step(Xdata,Ydata)
+      train_acc[ep_num] = step_acc.mean()
+      # printing
+      if ep_num%(nepochs/20) == 0:
+        print(ep_num/nepochs,train_acc[ep_num]) 
+    return train_acc
+
+  def eval_step(self,Xdata,Ydata):
+    ## setup
+    feed_dict = { self.net.xph:Xdata,
+                  self.net.yph:Ydata,
+                  self.net.dropout_rate:1.0,
+                  }
+    self.net.sess.run([self.net.itr_initop],feed_dict)
+    ## eval
+    step_yhat_sm,step_ybatch = self.net.sess.run(
+                                        [
+                                        self.net.yhat_sm,
+                                        self.net.ybatch_onehot
+                                        ],feed_dict)
+    step_acc = step_yhat_sm.argmax(2) == step_ybatch.argmax(2)
+    return step_acc
+
+  def eval_loop(self,nepisodes,ntrials=TRIALS_TOTAL):
+    """
+    preset pm trial positions for evaluating
+    """
+    acc_arr = np.zeros([nepisodes,ntrials])
+    for it in range(nepisodes):
+      self.net.sess.run(self.net.randomize_emat)
+      pm_trial_position = np.array([10-1,15-2]) # eval pm trial position
+      Xdata_eval,Ydata_eval = self.task.gen_seq(ntrials,pm_trial_position)
+      step_acc = self.eval_step(Xdata_eval,Ydata_eval)
+      acc_arr[it] = step_acc
+    return acc_arr
