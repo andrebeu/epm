@@ -1,1 +1,1 @@
-rsync -r -vam abeukers@tigergpu.princeton.edu:/tigress/abeukers/wd/epm/models/sweep_N/* /Users/abeukers/wd/epm/models/sweep_N/
+rsync -r -vam abeukers@tigergpu.princeton.edu:/tigress/abeukers/wd/epm/model_data/nback+pm/* /Users/abeukers/wd/epm/model_data/nback+pm
