@@ -5,7 +5,7 @@ TRAIN_PMEMBED = False
 
 class NBackPMTask():
 
-  def __init__(self,nback,num_og_tokens,ntrials_pm,seed=0):
+  def __init__(self,nback,num_og_tokens,num_trials_pm,seed=0):
     """ 
     """
     np.random.seed(seed)
@@ -13,7 +13,7 @@ class NBackPMTask():
     self.num_og_tokens = num_og_tokens
     self.pm_token = num_og_tokens
     self.min_start_trials = 1
-    self.ntrials_pm = ntrials_pm
+    self.num_trials_pm = num_trials_pm
     return None
 
   def gen_seq(self,ntrials=30,pm_trial_position=None):
@@ -23,8 +23,8 @@ class NBackPMTask():
     """
     # insert ranomly positioned pm trials
     if type(pm_trial_position)==type(None):
-      ntrials -= 1+self.ntrials_pm
-      pm_trial_position = np.random.randint(self.min_start_trials,ntrials,self.ntrials_pm) 
+      ntrials -= 1+self.num_trials_pm
+      pm_trial_position = np.random.randint(self.min_start_trials,ntrials,self.num_trials_pm) 
     else:
       ntrials -= 1+len(pm_trial_position)
       pm_trial_position = pm_trial_position
