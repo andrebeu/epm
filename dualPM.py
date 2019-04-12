@@ -137,32 +137,16 @@ class PMNet():
   def PureWM(self,xbatch):
     """
     """
-    print('lstm2, in+out layers with do_')
     # input projection with dropout
     xbatch = tf.keras.layers.Dense(self.stsize,activation='relu')(xbatch)
     xbatch = tf.keras.layers.Dropout(self.dropout_rate)(xbatch)
     # trinable initial states
-    init_cstate1 = tf.get_variable(name='init_cstate1',
-                  shape=[1,self.stsize],trainable=True)
-    init_hstate1 = tf.get_variable(name='init_hstate1',
-                  shape=[1,self.stsize],trainable=True)
-    init_cstate2 = tf.get_variable(name='init_cstate2',
-                  shape=[1,self.stsize],trainable=True)
-    init_hstate2 = tf.get_variable(name='init_hstate2',
-                  shape=[1,self.stsize],trainable=True)
-    init_state1 = [init_cstate1,init_hstate1]
-    init_state2 = [init_cstate2,init_hstate2]
+    init_cstate = tf.get_variable(name='init_cstate',shape=[1,self.stsize],trainable=True)
+    init_hstate = tf.get_variable(name='init_hstate1',shape=[1,self.stsize],trainable=True)
+    init_state = [init_cstate,init_hstate]
     ## lstm layers
-    lstm_layer1 = tf.keras.layers.LSTM(self.stsize,return_sequences=True)
-    lstm_outputs = lstm_layer1(xbatch,initial_state=init_state1)
-    # lstm_layer2 = tf.keras.layers.LSTM(self.stsize,return_sequences=True)
-    # lstm_outputs = lstm_layer2(lstm_outputs,initial_state=init_state2)
-    # lstm_cell1 = tf.keras.layers.LSTMCell(self.stsize)
-    # lstm_cell2 = tf.keras.layers.LSTMCell(self.stsize)
-    # lstm_layer = tf.keras.layers.RNN([lstm_cell1,lstm_cell2],return_sequences=True)
-    # init_state = lstm_layer.get_initial_state(inputs=xbatch)
-    # init_state = [init_cstate,init_hstate]
-    # lstm_outputs = lstm_layer(xbatch)
+    lstm_layer = tf.keras.layers.LSTM(self.stsize,return_sequences=True)
+    lstm_outputs = lstm_layer(xbatch,initial_state=init_state)
     ## readout layers
     lstm_outputs = tf.keras.layers.Dense(self.stsize,activation='relu')(lstm_outputs)
     lstm_outputs = tf.keras.layers.Dropout(self.dropout_rate)(lstm_outputs)

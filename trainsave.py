@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import tensorflow as tf
 
-from pureEM import *
+from dualPM import *
 
 # param inputs
 stsize = int(sys.argv[1])
