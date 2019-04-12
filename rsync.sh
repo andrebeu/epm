@@ -1,1 +1,1 @@
-rsync -r -vam abeukers@tigergpu.princeton.edu:/tigress/abeukers/wd/epm/model_data/nback+pm/*epochs_10000-*.npy /Users/abeukers/wd/epm/model_data/nback+pm
+rsync -r -vam abeukers@tigergpu.princeton.edu:/tigress/abeukers/wd/epm/model_data/*.npy /Users/abeukers/wd/epm/model_data/nback+pm
